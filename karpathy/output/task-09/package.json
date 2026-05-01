@@ -1,0 +1,26 @@
+{
+  "name": "events-etl-pipeline",
+  "version": "1.0.0",
+  "description": "Production-ready ETL pipeline with retries, idempotency, and structured logging.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "pipeline:run": "node --enable-source-maps dist/pipeline/runPipeline.js",
+    "pipeline:dev": "tsx src/pipeline/runPipeline.ts",
+    "test": "node --test --import tsx dist/pipeline/eventsPipeline.test.js",
+    "test:dev": "node --test --import tsx src/pipeline/eventsPipeline.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "optionalDependencies": {
+    "pg": "^8.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

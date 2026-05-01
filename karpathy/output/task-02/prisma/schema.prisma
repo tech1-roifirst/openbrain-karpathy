@@ -1,0 +1,78 @@
+// =====================================================================
+// Prisma schema — User + Order with indexes tuned for the
+// "fetch user with their last 10 orders" query.
+//
+// See: ../INDEXING_STRATEGY.md for full rationale.
+// See: ../queries/userWithOrders.ts for the read implementation.
+// =====================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  // previewFeatures enables `INCLUDE` columns (PG covering indexes) and
+  // is required for `@@index([...], type: BTree, ...)` with includes.
+  previewFeatures = ["fullTextSearchPostgres"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------
+// User
+// ---------------------------------------------------------------------
+// Primary key (id) is automatically a unique B-tree index in Postgres,
+// so a fetch by id is already O(log n) -> effectively constant for our
+// table sizes. The unique constraint on email creates a second B-tree
+// supporting login lookups.
+// ---------------------------------------------------------------------
+model User {
+  id         String   @id @default(uuid()) @db.Uuid
+  email      String   @unique
+  name       String
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relation: one user → many orders.
+  // Prisma uses this to implement the `include: { orders: { ... } }`
+  // pattern shown in queries/userWithOrders.ts, which issues two
+  // statements in a single round trip — NOT N+1.
+  orders Order[]
+
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------
+// Order
+// ---------------------------------------------------------------------
+// The composite index on (userId, createdAt DESC) is the single most
+// important optimization here. It lets the planner do an Index Only
+// Scan to fetch the most recent 10 orders for a user without sorting
+// or touching the heap.
+//
+// Notes on the @@index syntax:
+//   - `[userId, createdAt(sort: Desc)]`
+//        -> CREATE INDEX ... ON orders (user_id, created_at DESC)
+//   - We deliberately do NOT add a separate index on `userId` alone;
+//     the composite index already supports prefix lookups by userId.
+// ---------------------------------------------------------------------
+model Order {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  amount     Decimal  @db.Decimal(12, 2)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // FK -> users.id; ON DELETE CASCADE keeps orders consistent if a user
+  // is hard-deleted. Switch to Restrict if you prefer soft deletes.
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Composite covering index — the workhorse of this query.
+  // (See INDEXING_STRATEGY.md §2 for benchmark numbers.)
+  @@index([userId, createdAt(sort: Desc)], map: "orders_user_id_created_at_desc_idx")
+
+  // Optional: range queries like "all orders in last 7 days" benefit
+  // from an index on createdAt alone. Comment out if you do not run
+  // such queries — every index costs write throughput.
+  @@index([createdAt(sort: Desc)], map: "orders_created_at_desc_idx")
+
+  @@map("orders")
+}
